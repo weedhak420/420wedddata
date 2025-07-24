@@ -1,0 +1,31 @@
+# การตั้งค่าการอัปโหลดสื่อ
+watch_folders:
+  - "C:\\Users\\thana\\Downloads\\TelegramAutoDownload\\Photos\\「 Winter is coming ❄️ 8.1 」"
+
+
+telegram_group: "2038184154"
+tdl_path: "C:\\Users\\thana\\Downloads\\TelegramAutoDownload\\tdl.exe"
+log_file: "C:\\Users\\thana\\Downloads\\TelegramAutoDownload\\media_upload.log"
+history_file: "C:\\Users\\thana\\Downloads\\TelegramAutoDownload\\upload_history.json"
+
+backup_directory: backup
+backup_enabled: false
+max_backup_size_gb: 10    
+max_backup_files: 100
+max_workers: 5
+scan_interval: 30
+max_file_size_mb: 2500
+log_level: INFO
+
+
+# การตั้งค่าชนิดไฟล์สื่อที่รองรับ
+media_extensions:
+  - ".mp4"
+  - ".mkv"
+  - ".avi"
+  - ".mov"
+  - ".webm"
+  - ".jpg"
+  - ".jpeg"
+  - ".png"
+  - ".gif"
