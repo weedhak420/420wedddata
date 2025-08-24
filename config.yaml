@@ -20,6 +20,12 @@ history_db: "/root/telegram-files/logs/upload_history.db"
 max_workers: 2     # จำนวนไฟล์ที่จะอัปโหลดพร้อมกัน
 max_retries: 5     # จำนวนครั้งที่จะลองอัปโหลดใหม่หากล้มเหลว
 retry_delay: 10    # จำนวนวินาทีที่จะรอก่อนลองใหม่
+max_concurrent_uploads: 2  # จำกัดอัปโหลดพร้อมกันด้วย semaphore
+cooldown_period: 0         # หน่วงเวลาหลังแต่ละไฟล์ (วินาที)
+upload_timeout: 300        # timeout ของคำสั่ง tdl (วินาที)
+batch_size: 10             # จำนวนไฟล์ต่อหนึ่ง batch
+max_file_size: 52428800    # ขนาดไฟล์สูงสุด (ไบต์)
+health_report_interval: 300  # รายงานสถิติทุก 5 นาที
 
 # ลบไฟล์หลังจากอัปโหลดสำเร็จ
 remove_on_success: true
