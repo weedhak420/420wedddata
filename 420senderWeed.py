@@ -112,29 +112,64 @@ class MediaUploader:
         }
         self._save_history()
 
+    def _get_file_hash_cached(self, filepath: str) -> Optional[str]:
+        """คืนค่าแฮชของไฟล์ โดยคำนวณใหม่เมื่อขนาดหรือเวลาปรับปรุงเปลี่ยน"""
+        try:
+            stat = os.stat(filepath)
+            size = stat.st_size
+            mtime = stat.st_mtime
+
+            history_entry = self.upload_history.get(filepath)
+            if (
+                history_entry
+                and history_entry.get('file_size') == size
+                and history_entry.get('last_modified') == mtime
+            ):
+                return history_entry.get('file_hash')
+
+            file_hash = self._calculate_file_hash(filepath)
+            if file_hash:
+                self.upload_history[filepath] = {
+                    **(history_entry or {}),
+                    'file_hash': file_hash,
+                    'file_size': size,
+                    'last_modified': mtime,
+                }
+                self._save_history()
+            return file_hash
+        except Exception as e:
+            self.logger.error(f"ไม่สามารถอ่านข้อมูลไฟล์ {filepath}: {e}")
+            return None
+
     def _find_unuploaded_files(self) -> List[str]:
         """ค้นหาไฟล์ที่ยังไม่เคยอัปโหลด"""
         unuploaded_files = []
+        uploaded_hashes = {
+            v.get('file_hash')
+            for v in self.upload_history.values()
+            if v.get('uploaded_at')
+        }
+
         for folder in self.watch_folders:
             if not os.path.exists(folder):
                 continue
-            
+
             for root, _, files in os.walk(folder):
                 for file in files:
                     filepath = os.path.join(root, file)
                     _, ext = os.path.splitext(filepath)
-                    
+
                     if ext.lower() in self.media_extensions:
-                        file_hash = self._calculate_file_hash(filepath)
-                        if file_hash and file_hash not in self.upload_history:
+                        file_hash = self._get_file_hash_cached(filepath)
+                        if file_hash and file_hash not in uploaded_hashes:
                             unuploaded_files.append(filepath)
-        
+
         return unuploaded_files
 
     def _upload_media(self, media_path: str) -> bool:
         """อัปโหลดไฟล์สื่อไปยัง Telegram"""
         try:
-            file_hash = self._calculate_file_hash(media_path)
+            file_hash = self._get_file_hash_cached(media_path)
             if not file_hash:
                 return False
 
@@ -158,14 +193,17 @@ class MediaUploader:
                 result = subprocess.run(upload_params, capture_output=True, text=True, encoding='utf-8')
                 
                 if result.returncode == 0:
+                    stat = os.stat(media_path)
                     upload_entry = {
                         'filename': os.path.basename(media_path),
                         'file_hash': file_hash,
                         'uploaded_at': datetime.now().isoformat(),
-                        'size_mb': round(os.path.getsize(media_path) / (1024 * 1024), 2),
+                        'size_mb': round(stat.st_size / (1024 * 1024), 2),
+                        'file_size': stat.st_size,
+                        'last_modified': stat.st_mtime,
                         'type': 'photo' if ext.lower() in ['.jpg', '.jpeg', '.png', '.gif'] else 'video'
                     }
-                    self.upload_history[file_hash] = upload_entry
+                    self.upload_history[media_path] = upload_entry
                     self._save_history()
                     
                     # ลบไฟล์หลังอัปโหลดสำเร็จ
