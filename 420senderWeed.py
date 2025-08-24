@@ -11,7 +11,7 @@ from typing import List, Dict, Optional
 
 import yaml
 from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
+from watcher import Watcher
 
 class MediaUploaderConfig:
     def __init__(self, config_path: str = 'config.yaml'):
@@ -221,15 +221,26 @@ def main():
     uploader._cleanup_old_history()
 
     uploader.logger.info("เริ่มตรวจสอบโฟลเดอร์...")
-    
+
+    # ประมวลผลไฟล์ที่มีอยู่ก่อนเริ่มเฝ้าระวัง
+    uploader.process_files()
+
+    observer = Observer()
+    handler = Watcher(uploader)
+    for folder in uploader.watch_folders:
+        observer.schedule(handler, folder, recursive=True)
+
     try:
-        while True:
-            uploader.process_files()
-            time.sleep(10)
+        observer.start()
+        observer.join()
     except KeyboardInterrupt:
+        observer.stop()
+        observer.join()
         uploader.logger.info("หยุดการทำงานโดยผู้ใช้")
     except Exception as e:
         uploader.logger.error(f"เกิดข้อผิดพลาดในลูปหลัก: {e}")
+        observer.stop()
+        observer.join()
 
 if __name__ == "__main__":
     main()
