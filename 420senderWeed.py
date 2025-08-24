@@ -464,6 +464,21 @@ class MediaUploader:
         if not file_hash:
             return False
 
+        # Double-check for duplicates in case a file appears while another upload is in-flight
+        with self.db_lock:
+            dup = self.conn.execute(
+                "SELECT 1 FROM uploads WHERE hash=?", (file_hash,)
+            ).fetchone()
+        if dup:
+            self.logger.info(f"Skipping already uploaded file: {media_path}")
+            if self.config.get('remove_on_success', False) or self.auto_remove_duplicates:
+                try:
+                    media_path.unlink()
+                    self.logger.info(f"Removed local file: {media_path}")
+                except OSError as e:
+                    self.logger.error(f"Failed to remove file {media_path}: {e}")
+            return True
+
         command = [str(self.tdl_path), 'up', '-p', str(media_path), '-c', self.telegram_group]
         if media_path.suffix.lower() in {'.jpg', '.jpeg', '.png', '.gif'}:
             command.append('--photo')
