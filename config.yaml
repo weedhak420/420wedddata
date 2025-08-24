@@ -1,24 +1,31 @@
-# การตั้งค่าการอัปโหลดสื่อ
+# เส้นทางไปยังโปรแกรม tdl (สำคัญมาก!)
+tdl_path: "/root/telegram-files/tdl"
+
+# โฟลเดอร์ที่ต้องการให้สคริปต์ตรวจสอบไฟล์
 watch_folders:
-  - "C:\\Users\\thana\\Downloads\\TelegramAutoDownload\\Photos\\「 Winter is coming ❄️ 8.1 」"
+  - "/root/weed420data/420weedtelegram-files/data/account/6f16195c-1e74-4b5b-b084-9d5720db4fb5/videos/"
+  - "/root/weed420data/420weedtelegram-files/data/account/6f16195c-1e74-4b5b-b084-9d5720db4fb5/photos/"
+  - "/root/telegram-files/data/account/5dd4bf27-b12f-40d2-9ef5-91a462e1e5f8/photos/"
+  - "/root/telegram-files/data/account/5dd4bf27-b12f-40d2-9ef5-91a462e1e5f8/videos/"
+# การตั้งค่า Telegram
+telegram_group: "2038184154" # กรุณาเปลี่ยนเป็น ID กลุ่มของคุณ
+namespace: "5dd4bf27-b12f-40d2-9ef5-91a462e1e5f8"
+storage_path: "/root/telegram-files/data/account" # เส้นทางไปยังโฟลเดอร์ account
 
+# การตั้งค่าไฟล์ Log และประวัติการอัปโหลด
+log_file: "/root/telegram-files/logs/media_upload.log"
+history_file: "/root/telegram-files/logs/upload_history.json"
 
-telegram_group: "2038184154"
-tdl_path: "C:\\Users\\thana\\Downloads\\TelegramAutoDownload\\tdl.exe"
-log_file: "C:\\Users\\thana\\Downloads\\TelegramAutoDownload\\media_upload.log"
-history_file: "C:\\Users\\thana\\Downloads\\TelegramAutoDownload\\upload_history.json"
+# การตั้งค่าประสิทธิภาพ
+scan_interval: 60  # สแกนหาไฟล์ใหม่ทุกๆ 60 วินาที
+max_workers: 2     # จำนวนไฟล์ที่จะอัปโหลดพร้อมกัน
+max_retries: 5     # จำนวนครั้งที่จะลองอัปโหลดใหม่หากล้มเหลว
+retry_delay: 10    # จำนวนวินาทีที่จะรอก่อนลองใหม่
 
-backup_directory: backup
-backup_enabled: false
-max_backup_size_gb: 10    
-max_backup_files: 100
-max_workers: 5
-scan_interval: 30
-max_file_size_mb: 2500
-log_level: INFO
+# ลบไฟล์หลังจากอัปโหลดสำเร็จ
+remove_on_success: true
 
-
-# การตั้งค่าชนิดไฟล์สื่อที่รองรับ
+# ชนิดของไฟล์ที่ต้องการให้อัปโหลด
 media_extensions:
   - ".mp4"
   - ".mkv"
@@ -29,3 +36,6 @@ media_extensions:
   - ".jpeg"
   - ".png"
   - ".gif"
+
+# ระดับการแสดงผลของ Log
+log_level: "INFO"
