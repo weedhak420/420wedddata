@@ -38,6 +38,8 @@ class MediaUploader:
         self.tdl_path = self.config.get('tdl_path')
         self.log_file = self.config.get('log_file', 'media_upload.log')
         self.history_file = self.config.get('history_file', 'upload_history.json')
+        self.max_workers = self.config.get('max_workers', 3)
+        self.scan_interval = self.config.get('scan_interval', 10)
         
         # การตั้งค่าล็อก
         logging.basicConfig(
@@ -198,7 +200,7 @@ class MediaUploader:
         self.logger.info(f"พบไฟล์ใหม่ {len(unuploaded_files)} ไฟล์")
         
         # ใช้ ThreadPoolExecutor เพื่อประมวลผลแบบขนาน
-        with ThreadPoolExecutor(max_workers=3) as executor:
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = {executor.submit(self._upload_media, filepath): filepath for filepath in unuploaded_files}
             
             for future in as_completed(futures):
@@ -225,7 +227,7 @@ def main():
     try:
         while True:
             uploader.process_files()
-            time.sleep(10)
+            time.sleep(uploader.scan_interval)
     except KeyboardInterrupt:
         uploader.logger.info("หยุดการทำงานโดยผู้ใช้")
     except Exception as e:
