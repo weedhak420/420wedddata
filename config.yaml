@@ -23,9 +23,20 @@ retry_delay: 10    # จำนวนวินาทีที่จะรอก�
 max_concurrent_uploads: 2  # จำกัดอัปโหลดพร้อมกันด้วย semaphore
 cooldown_period: 0         # หน่วงเวลาหลังแต่ละไฟล์ (วินาที)
 upload_timeout: 300        # timeout ของคำสั่ง tdl (วินาที)
-batch_size: 10             # จำนวนไฟล์ต่อหนึ่ง batch
+batch_bytes: 52428800      # ขนาดรวมต่อ batch (ไบต์)
 max_file_size: 52428800    # ขนาดไฟล์สูงสุด (ไบต์)
 health_report_interval: 300  # รายงานสถิติทุก 5 นาที
+auto_remove_duplicates: false
+cpu_threshold: 90
+mem_threshold: 90
+throttle_sleep: 5
+enable_dashboard: false
+dashboard_port: 8000
+smart_compress: false
+compress_threshold: 5242880
+image_quality: 85
+min_resolution: [0, 0]
+max_video_duration: 0
 
 # ลบไฟล์หลังจากอัปโหลดสำเร็จ
 remove_on_success: true
