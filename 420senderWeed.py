@@ -156,7 +156,9 @@ class MediaUploader:
             max_retries = 3
             for attempt in range(max_retries):
                 result = subprocess.run(upload_params, capture_output=True, text=True, encoding='utf-8')
-                
+                self.logger.debug(f"stdout: {result.stdout}")
+                self.logger.debug(f"stderr: {result.stderr}")
+
                 if result.returncode == 0:
                     upload_entry = {
                         'filename': os.path.basename(media_path),
@@ -177,15 +179,20 @@ class MediaUploader:
                     
                     return True
                 else:
-                    self.logger.warning(f"อัปโหลดล้มเหลว รอบที่ {attempt + 1}: {media_path}")
+                    self.logger.warning(
+                        f"อัปโหลดล้มเหลว รอบที่ {attempt + 1} (return code {result.returncode}): {media_path}"
+                    )
                     time.sleep(2 ** attempt)  # Exponential backoff
-            
-            self.logger.error(f"อัปโหลดล้มเหลวหลังจากลอง {max_retries} ครั้ง: {media_path}")
-            return False
+
+            error_msg = (
+                f"อัปโหลดล้มเหลวหลังจากลอง {max_retries} ครั้ง (return code {result.returncode}): {media_path}"
+            )
+            self.logger.error(error_msg)
+            raise RuntimeError(error_msg)
 
         except Exception as e:
             self.logger.error(f"เกิดข้อผิดพลาดในการอัปโหลด {media_path}: {e}")
-            return False
+            raise
 
     def process_files(self):
         """ประมวลผลไฟล์ด้วย ThreadPoolExecutor"""
