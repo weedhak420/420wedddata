@@ -65,12 +65,17 @@ class MediaUploader:
     def _validate_paths(self):
         """ตรวจสอบความถูกต้องของเส้นทางที่จำเป็น"""
         if not os.path.exists(self.tdl_path):
-            self.logger.error(f"ไม่พบไฟล์ tdl: {self.tdl_path}")
+            self.logger.critical(f"ไม่พบไฟล์ tdl: {self.tdl_path}. ยกเลิกการทำงาน")
             sys.exit(1)
 
         for folder in self.watch_folders:
             if not os.path.exists(folder):
-                self.logger.warning(f"โฟลเดอร์ไม่มีอยู่: {folder}")
+                try:
+                    os.makedirs(folder, exist_ok=True)
+                    self.logger.info(f"สร้างโฟลเดอร์ใหม่: {folder}")
+                except Exception as e:
+                    self.logger.critical(f"ไม่สามารถสร้างโฟลเดอร์ {folder}: {e}. ยกเลิกการทำงาน")
+                    sys.exit(1)
 
     def _calculate_file_hash(self, filepath: str) -> Optional[str]:
         """คำนวณแฮชของไฟล์ด้วย SHA-256"""
