@@ -5,11 +5,19 @@ import time
 import logging
 import hashlib
 import subprocess
-import shutil
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Tuple
-import gc
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+from typing import List, Optional
+from logging.handlers import RotatingFileHandler
+import threading
+import sqlite3
+
+try:
+    from watchdog.observers import Observer
+    from watchdog.events import FileSystemEventHandler
+except ImportError:  # pragma: no cover - watchdog may not be installed in some envs
+    Observer = None
+    FileSystemEventHandler = object
 
 # Make yaml import optional
 try:
@@ -52,6 +60,20 @@ class MediaUploaderConfig:
         return self.config.get(key, default)
 
 class MediaUploader:
+    class _MediaHandler(FileSystemEventHandler):
+        """Handle file system events."""
+
+        def __init__(self, uploader: "MediaUploader"):
+            self.uploader = uploader
+
+        def on_created(self, event):  # pragma: no cover - integration
+            if not getattr(event, "is_directory", False):
+                self.uploader._enqueue_file(event.src_path)
+
+        def on_modified(self, event):  # pragma: no cover - integration
+            if not getattr(event, "is_directory", False):
+                self.uploader._enqueue_file(event.src_path)
+
     def __init__(self, config: MediaUploaderConfig):
         """Initialize the upload system."""
         self.config = config
@@ -61,28 +83,45 @@ class MediaUploader:
         self.telegram_group = self.config.get('telegram_group')
         self.tdl_path = self.config.get('tdl_path')
         self.log_file = self.config.get('log_file', 'media_upload.log')
-        self.history_file = self.config.get('history_file', 'upload_history.json')
-        self.scan_interval = self.config.get('scan_interval', 60)
-        self.max_workers = self.config.get('max_workers', 1)
+        self.history_db = self.config.get('history_db', 'upload_history.db')
+        self.max_workers = self.config.get('max_workers', os.cpu_count() or 1)
+        self.max_retries = self.config.get('max_retries', 3)
+        self.retry_delay = self.config.get('retry_delay', 5)
         self.media_extensions = set(self.config.get('media_extensions', []))
+        self.log_max_bytes = self.config.get('log_max_bytes', 10 * 1024 * 1024)
+        self.log_backup_count = self.config.get('log_backup_count', 5)
 
-        # Setup logger
+        # Setup logger with rotation
         log_level = getattr(logging, self.config.get('log_level', 'INFO').upper(), logging.INFO)
+        rotating_handler = RotatingFileHandler(
+            self.log_file, maxBytes=self.log_max_bytes, backupCount=self.log_backup_count, encoding='utf-8'
+        )
         logging.basicConfig(
             level=log_level,
             format='%(asctime)s - %(levelname)s: %(message)s',
-            handlers=[
-                logging.FileHandler(self.log_file, encoding='utf-8'),
-                logging.StreamHandler(sys.stdout)
-            ]
+            handlers=[rotating_handler, logging.StreamHandler(sys.stdout)]
         )
         self.logger = logging.getLogger(__name__)
 
         # Validate paths before proceeding
         self._validate_paths()
 
-        # Load upload history
-        self.upload_history = self._load_history()
+        if Observer is None:
+            self.logger.critical("watchdog library is required for file watching.")
+            sys.exit(1)
+
+        # Initialize executor and state holders
+        self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
+        self.pending_lock = threading.Lock()
+        self.pending: set[str] = set()
+
+        # Initialize history database
+        self.db_lock = threading.Lock()
+        self._init_db()
+
+        # Setup observer for file system events
+        self.observer = Observer()
+        self.event_handler = self._MediaHandler(self)
 
     def _validate_paths(self):
         """Validate required paths."""
@@ -104,13 +143,43 @@ class MediaUploader:
             self.logger.critical("No valid 'watch_folders' found. Please check your config.")
             sys.exit(1)
         self.watch_folders = valid_folders
+        
+    def _init_db(self) -> None:
+        """Initialise SQLite database for upload history."""
+        with self.db_lock:
+            self.conn = sqlite3.connect(self.history_db, check_same_thread=False)
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS uploads (
+                    path TEXT PRIMARY KEY,
+                    hash TEXT,
+                    size INTEGER,
+                    mtime REAL,
+                    uploaded_at TEXT
+                )
+                """
+            )
+            self.conn.commit()
 
-    def _calculate_file_hash(self, filepath: str) -> Optional[str]:
+    def _is_media_file(self, path: str) -> bool:
+        _, ext = os.path.splitext(path)
+        return ext.lower() in self.media_extensions
+
+    def _needs_upload(self, path: str) -> bool:
+        if not os.path.isfile(path):
+            return False
+        stat = os.stat(path)
+        with self.db_lock:
+            cur = self.conn.execute("SELECT size, mtime FROM uploads WHERE path=?", (path,))
+            row = cur.fetchone()
+        return not (row and row[0] == stat.st_size and row[1] == stat.st_mtime)
+
+    def _calculate_file_hash(self, filepath: str, block_size: int = 1024 * 1024) -> Optional[str]:
         """Calculate file hash using SHA-256."""
         hasher = hashlib.sha256()
         try:
             with open(filepath, 'rb') as f:
-                for chunk in iter(lambda: f.read(8192), b""):
+                for chunk in iter(lambda: f.read(block_size), b""):
                     hasher.update(chunk)
             return hasher.hexdigest()
         except FileNotFoundError:
@@ -120,42 +189,27 @@ class MediaUploader:
             self.logger.error(f"Could not calculate hash for {filepath}: {e}")
             return None
 
-    def _load_history(self) -> Dict:
-        """Load upload history from file."""
-        if not os.path.exists(self.history_file):
-            return {}
+    def _enqueue_file(self, path: str) -> None:
+        if not self._is_media_file(path):
+            return
+        with self.pending_lock:
+            if path in self.pending:
+                return
+            self.pending.add(path)
+        self.executor.submit(self._process_file, path)
+
+    def _process_file(self, path: str) -> None:
         try:
-            with open(self.history_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
-            self.logger.error(f"History file is corrupted or unreadable. Starting with empty history. Error: {e}")
-            return {}
-
-    def _save_history(self):
-        """Save upload history."""
-        try:
-            with open(self.history_file, 'w', encoding='utf-8') as f:
-                json.dump(self.upload_history, f, indent=2, ensure_ascii=False)
-        except IOError as e:
-            self.logger.error(f"Failed to save history: {e}")
-
-    def _find_unuploaded_files(self) -> List[str]:
-        """Find files that have not been uploaded yet."""
-        unuploaded_files = []
-        for folder in self.watch_folders:
-            for root, _, files in os.walk(folder):
-                for file in files:
-                    filepath = os.path.join(root, file)
-                    _, ext = os.path.splitext(filepath)
-
-                    if ext.lower() in self.media_extensions:
-                        file_hash = self._calculate_file_hash(filepath)
-                        if file_hash and file_hash not in self.upload_history:
-                            unuploaded_files.append(filepath)
-        return unuploaded_files
+            if self._needs_upload(path):
+                success = self._upload_media(path)
+                if not success:
+                    self.logger.warning(f"Upload task for {path} failed.")
+        finally:
+            with self.pending_lock:
+                self.pending.discard(path)
 
     def _upload_media(self, media_path: str) -> bool:
-        """Upload a single media file to Telegram."""
+        """Upload a single media file to Telegram with retry logic."""
         file_hash = self._calculate_file_hash(media_path)
         if not file_hash:
             return False
@@ -165,39 +219,64 @@ class MediaUploader:
         if ext.lower() in {'.jpg', '.jpeg', '.png', '.gif'}:
             command.append('--photo')
 
-        self.logger.info(f"Starting upload for: {os.path.basename(media_path)}")
+        for attempt in range(1, self.max_retries + 1):
+            self.logger.info(f"Starting upload for: {os.path.basename(media_path)} (attempt {attempt})")
+            try:
+                result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', check=False)
 
+                if result.returncode == 0:
+                    self.logger.info(f"Successfully uploaded: {os.path.basename(media_path)}")
+                    stat = os.stat(media_path)
+                    with self.db_lock:
+                        self.conn.execute(
+                            "INSERT OR REPLACE INTO uploads (path, hash, size, mtime, uploaded_at) VALUES (?,?,?,?,?)",
+                            (media_path, file_hash, stat.st_size, stat.st_mtime, datetime.now().isoformat()),
+                        )
+                        self.conn.commit()
+
+                    if self.config.get('remove_on_success', False):
+                        try:
+                            os.remove(media_path)
+                            self.logger.info(f"Removed local file: {media_path}")
+                        except OSError as e:
+                            self.logger.error(f"Failed to remove file {media_path}: {e}")
+
+                    return True
+                else:
+                    self.logger.error(
+                        f"Failed to upload {os.path.basename(media_path)}. Stderr: {result.stderr.strip()}"
+                    )
+            except Exception as e:
+                self.logger.error(f"An exception occurred during upload of {media_path}: {e}")
+
+            if attempt < self.max_retries:
+                backoff = self.retry_delay * attempt
+                self.logger.info(f"Retrying in {backoff} seconds...")
+                time.sleep(backoff)
+
+        return False
+
+    def _iter_files(self, folder: str):
         try:
-            result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', check=False)
-
-            if result.returncode == 0:
-                self.logger.info(f"Successfully uploaded: {os.path.basename(media_path)}")
-                self.upload_history[file_hash] = {
-                    'filename': os.path.basename(media_path),
-                    'uploaded_at': datetime.now().isoformat(),
-                }
-                self._save_history()
-
-                # Optionally remove the file after upload
-                # To enable, add 'remove_on_success: true' to your config
-                if self.config.get('remove_on_success', False):
-                    try:
-                        os.remove(media_path)
-                        self.logger.info(f"Removed local file: {media_path}")
-                    except OSError as e:
-                        self.logger.error(f"Failed to remove file {media_path}: {e}")
-
-                return True
-            else:
-                self.logger.error(f"Failed to upload {os.path.basename(media_path)}. "
-                                  f"Stderr: {result.stderr.strip()}")
-                return False
+            with os.scandir(folder) as it:
+                for entry in it:
+                    if entry.is_dir(follow_symlinks=False):
+                        yield from self._iter_files(entry.path)
+                    elif entry.is_file(follow_symlinks=False) and self._is_media_file(entry.path):
+                        yield entry.path
         except Exception as e:
-            self.logger.error(f"An exception occurred during upload of {media_path}: {e}")
-            return False
+            self.logger.error(f"Error scanning folder {folder}: {e}")
+
+    def _find_unuploaded_files(self) -> List[str]:
+        unuploaded_files = []
+        for folder in self.watch_folders:
+            for path in self._iter_files(folder):
+                if self._needs_upload(path):
+                    unuploaded_files.append(path)
+        return unuploaded_files
 
     def process_files(self):
-        """Find and upload all new files."""
+        """Find and upload all new files in the watch folders."""
         self.logger.info("Scanning for new files...")
         unuploaded_files = self._find_unuploaded_files()
 
@@ -207,33 +286,37 @@ class MediaUploader:
 
         self.logger.info(f"Found {len(unuploaded_files)} new file(s). Starting upload process...")
 
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = {executor.submit(self._upload_media, filepath): filepath for filepath in unuploaded_files}
-
-            for future in as_completed(futures):
-                filepath = futures[future]
-                try:
-                    success = future.result()
-                    if not success:
-                        self.logger.warning(f"Upload task for {filepath} failed.")
-                except Exception as e:
-                    self.logger.error(f"Error processing future for {filepath}: {e}")
+        futures = [self.executor.submit(self._upload_media, filepath) for filepath in unuploaded_files]
+        for future in as_completed(futures):
+            try:
+                if not future.result():
+                    self.logger.warning("An upload task failed.")
+            except Exception as e:
+                self.logger.error(f"Error processing future: {e}")
 
     def run(self):
-        """Run the media uploader using a polling loop."""
-        self.logger.info("Starting Media Uploader in polling mode...")
-        self.logger.info(f"Scanning folders every {self.scan_interval} seconds.")
+        """Run the media uploader using file system events."""
+        self.logger.info("Starting Media Uploader with watchdog...")
+        for folder in self.watch_folders:
+            self.observer.schedule(self.event_handler, folder, recursive=True)
 
+        # Initial scan to catch existing files
+        self.process_files()
+
+        self.observer.start()
         try:
             while True:
-                self.process_files()
-                self.logger.info(f"Waiting for {self.scan_interval} seconds before next scan...")
-                time.sleep(self.scan_interval)
+                time.sleep(1)
         except KeyboardInterrupt:
             self.logger.info("Shutting down...")
         except Exception as e:
             self.logger.critical(f"A critical error occurred in the main loop: {e}")
         finally:
+            self.observer.stop()
+            self.observer.join()
+            self.executor.shutdown(wait=True)
+            with self.db_lock:
+                self.conn.close()
             self.logger.info("Shutdown complete.")
 
 def main():
@@ -247,3 +330,4 @@ def main():
     uploader.run()
 
 if __name__ == '__main__':
+    main()
