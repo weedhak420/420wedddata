@@ -6,7 +6,7 @@ import logging
 import hashlib
 import subprocess
 import shutil
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
 import gc
@@ -20,7 +20,7 @@ except ImportError:
     logging.warning("PyYAML is not installed. Will use JSON for config if needed.")
 
 class MediaUploaderConfig:
-    def __init__(self, config_path: str = 'config.yaml'):
+    def __init__(self, config_path: str = 'config420.yaml'):
         """Load settings from YAML or JSON file."""
         self.config = {}
         try:
@@ -59,6 +59,10 @@ class MediaUploader:
         # Load settings
         self.watch_folders = self.config.get('watch_folders', [])
         self.telegram_group = self.config.get('telegram_group')
+        
+        # NEW: Load group mapping for different media types
+        self.group_mapping = self.config.get('group_mapping', {})
+        
         self.tdl_path = self.config.get('tdl_path')
         self.log_file = self.config.get('log_file', 'media_upload.log')
         self.history_file = self.config.get('history_file', 'upload_history.json')
@@ -154,6 +158,34 @@ class MediaUploader:
                             unuploaded_files.append(filepath)
         return unuploaded_files
 
+    def _get_target_group(self, media_path: str) -> str:
+        """
+        NEW: Determine which Telegram group to upload to based on file extension.
+        Falls back to default telegram_group if no mapping exists.
+        """
+        _, ext = os.path.splitext(media_path)
+        ext_lower = ext.lower()
+        
+        # Check if group_mapping exists and has configuration
+        if self.group_mapping:
+            # Check video extensions
+            video_exts = self.group_mapping.get('video_extensions', [])
+            video_group = self.group_mapping.get('video_group')
+            if ext_lower in video_exts and video_group:
+                self.logger.debug(f"File {os.path.basename(media_path)} matched video group")
+                return video_group
+            
+            # Check image extensions
+            image_exts = self.group_mapping.get('image_extensions', [])
+            image_group = self.group_mapping.get('image_group')
+            if ext_lower in image_exts and image_group:
+                self.logger.debug(f"File {os.path.basename(media_path)} matched image group")
+                return image_group
+        
+        # Fall back to default group
+        self.logger.debug(f"File {os.path.basename(media_path)} using default group")
+        return self.telegram_group
+
     def _upload_media(self, media_path: str) -> bool:
         """Upload a single media file to Telegram."""
         file_hash = self._calculate_file_hash(media_path)
@@ -161,20 +193,25 @@ class MediaUploader:
             return False
 
         _, ext = os.path.splitext(media_path)
-        command = [self.tdl_path, 'up', '-p', media_path, '-c', self.telegram_group]
+        
+        # NEW: Get target group based on file type
+        target_group = self._get_target_group(media_path)
+        
+        command = [self.tdl_path, 'up', '-p', media_path, '-c', target_group]
         if ext.lower() in {'.jpg', '.jpeg', '.png', '.gif'}:
             command.append('--photo')
 
-        self.logger.info(f"Starting upload for: {os.path.basename(media_path)}")
+        self.logger.info(f"Starting upload for: {os.path.basename(media_path)} to group: {target_group}")
 
         try:
             result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', check=False)
 
             if result.returncode == 0:
-                self.logger.info(f"Successfully uploaded: {os.path.basename(media_path)}")
+                self.logger.info(f"Successfully uploaded: {os.path.basename(media_path)} to {target_group}")
                 self.upload_history[file_hash] = {
                     'filename': os.path.basename(media_path),
                     'uploaded_at': datetime.now().isoformat(),
+                    'target_group': target_group,  # NEW: Track which group was used
                 }
                 self._save_history()
 
@@ -247,3 +284,4 @@ def main():
     uploader.run()
 
 if __name__ == '__main__':
+        main()
