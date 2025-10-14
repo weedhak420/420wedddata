@@ -1,41 +1,55 @@
-# เส้นทางไปยังโปรแกรม tdl (สำคัญมาก!)
-tdl_path: "/root/telegram-files/tdl"
-
-# โฟลเดอร์ที่ต้องการให้สคริปต์ตรวจสอบไฟล์
+# ===== การตั้งค่าพื้นฐาน (เหมือนเดิม) =====
 watch_folders:
-  - "/root/weed420data/420weedtelegram-files/data/account/6f16195c-1e74-4b5b-b084-9d5720db4fb5/videos/"
-  - "/root/weed420data/420weedtelegram-files/data/account/6f16195c-1e74-4b5b-b084-9d5720db4fb5/photos/"
-  - "/root/telegram-files/data/account/5dd4bf27-b12f-40d2-9ef5-91a462e1e5f8/photos/"
-  - "/root/telegram-files/data/account/5dd4bf27-b12f-40d2-9ef5-91a462e1e5f8/videos/"
-# การตั้งค่า Telegram
-telegram_group: "2038184154" # กรุณาเปลี่ยนเป็น ID กลุ่มของคุณ
-namespace: "5dd4bf27-b12f-40d2-9ef5-91a462e1e5f8"
-storage_path: "/root/telegram-files/data/account" # เส้นทางไปยังโฟลเดอร์ account
+  - /path/to/media/folder1
+  - /path/to/media/folder2
 
-# การตั้งค่าไฟล์ Log และประวัติการอัปโหลด
-log_file: "/root/telegram-files/logs/media_upload.log"
-history_file: "/root/telegram-files/logs/upload_history.json"
+# Group เริ่มต้น (ถ้าไฟล์ไม่ตรงกับเงื่อนไขใน group_mapping)
+telegram_group: "default_group_chat_id"
 
-# การตั้งค่าประสิทธิภาพ
-scan_interval: 60  # สแกนหาไฟล์ใหม่ทุกๆ 60 วินาที
-max_workers: 2     # จำนวนไฟล์ที่จะอัปโหลดพร้อมกัน
-max_retries: 5     # จำนวนครั้งที่จะลองอัปโหลดใหม่หากล้มเหลว
-retry_delay: 10    # จำนวนวินาทีที่จะรอก่อนลองใหม่
+tdl_path: "/usr/local/bin/tdl"
 
-# ลบไฟล์หลังจากอัปโหลดสำเร็จ
-remove_on_success: true
-
-# ชนิดของไฟล์ที่ต้องการให้อัปโหลด
-media_extensions:
-  - ".mp4"
-  - ".mkv"
-  - ".avi"
-  - ".mov"
-  - ".webm"
-  - ".jpg"
-  - ".jpeg"
-  - ".png"
-  - ".gif"
-
-# ระดับการแสดงผลของ Log
+log_file: "media_upload.log"
+history_file: "upload_history.json"
+scan_interval: 60
+max_workers: 2
 log_level: "INFO"
+
+media_extensions:
+  - .mp4
+  - .mkv
+  - .avi
+  - .mov
+  - .jpg
+  - .jpeg
+  - .png
+  - .gif
+
+# ถ้าต้องการลบไฟล์หลังอัปโหลดสำเร็จ
+remove_on_success: false
+
+# ===== ฟีเจอร์ใหม่: แยก Group ตามประเภทไฟล์ =====
+group_mapping:
+  # กำหนดนามสกุลไฟล์วิดีโอ
+  video_extensions:
+    - .mp4
+    - .mkv
+    - .avi
+    - .mov
+    - .wmv
+    - .flv
+    - .webm
+  
+  # Chat ID หรือ username ของ group สำหรับวิดีโอ
+  video_group: "video_group_chat_id"
+  
+  # กำหนดนามสกุลไฟล์รูปภาพ
+  image_extensions:
+    - .jpg
+    - .jpeg
+    - .png
+    - .gif
+    - .bmp
+    - .webp
+  
+  # Chat ID หรือ username ของ group สำหรับรูปภาพ
+  image_group: "image_group_chat_id"
